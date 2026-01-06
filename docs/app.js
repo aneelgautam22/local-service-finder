@@ -1,241 +1,182 @@
-const API = "https://local-service-finder-api.onrender.com/api";
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import sqlite3
+from pathlib import Path
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+DB_PATH = Path(__file__).with_name("services.db")
+
+# ====== CONFIG ======
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "admin123")  # change later if you want
 
 
-const resultsEl = document.getElementById("results");
-const msgEl = document.getElementById("msg");
+# ---------------- DB Helpers ----------------
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-const catEl = document.getElementById("category");
-const areaEl = document.getElementById("area");
-const keywordEl = document.getElementById("keyword");
 
-const nameEl = document.getElementById("name");
-const newCategoryEl = document.getElementById("newCategory");
-const newAreaEl = document.getElementById("newArea");
-const phoneEl = document.getElementById("phone");
-const descEl = document.getElementById("desc");
+def init_db():
+    conn = get_connection()
+    cur = conn.cursor()
 
-const btnSearch = document.getElementById("btnSearch");
-const btnSave = document.getElementById("btnSave");
-const btnCancel = document.getElementById("btnCancel");
-const btnRefresh = document.getElementById("btnRefresh");
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS services (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            area TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            description TEXT DEFAULT ''
+        )
+    """)
 
-const formTitle = document.getElementById("formTitle");
-const modeBadge = document.getElementById("modeBadge");
+    cur.execute("SELECT COUNT(*) AS c FROM services")
+    if cur.fetchone()["c"] == 0:
+        sample = [
+            ("Ram Plumber", "Plumber", "Butwal", "9800000001", "Leak fixing"),
+            ("Sita Electric", "Electrician", "Butwal", "9800000002", "Wiring & repair"),
+        ]
+        cur.executemany("""
+            INSERT INTO services (name, category, area, phone, description)
+            VALUES (?, ?, ?, ?, ?)
+        """, sample)
 
-let editingId = null;
+    conn.commit()
+    conn.close()
 
-// ---------- Helpers ----------
-function setMsg(text, ok=true){
-  msgEl.style.color = ok ? "green" : "crimson";
-  msgEl.textContent = text || "";
-}
 
-function escapeHtml(s){
-  return String(s ?? "").replace(/[&<>"']/g, m => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-  }[m]));
-}
+# ---------------- SECURITY ----------------
+def is_admin(req):
+    return req.headers.get("X-ADMIN-KEY") == ADMIN_KEY
 
-function validateService({name, category, area, phone}){
-  if(!name.trim() || !category.trim() || !area.trim() || !phone.trim()){
-    return "Name, Category, Area, Phone are required.";
-  }
-  // allow digits, +, space, -
-  if(!/^[0-9+ -]{7,20}$/.test(phone.trim())){
-    return "Phone looks invalid. Use digits only (or +, space, -).";
-  }
-  return null;
-}
 
-function setModeEdit(isEdit){
-  if(isEdit){
-    formTitle.textContent = "Edit Service";
-    modeBadge.textContent = "EDIT MODE";
-    btnCancel.style.display = "inline-block";
-  } else {
-    formTitle.textContent = "Add New Service";
-    modeBadge.textContent = "ADD MODE";
-    btnCancel.style.display = "none";
-  }
-}
+def admin_required():
+    return jsonify({"error": "Read-only mode. Admin only."}), 403
 
-// ---------- Load Meta ----------
-async function loadMeta(){
-  const res = await fetch(`${API}/meta`);
-  const data = await res.json();
 
-  catEl.innerHTML = `<option value="">All Categories</option>`;
-  areaEl.innerHTML = `<option value="">All Areas</option>`;
+# ---------------- API Routes ----------------
+@app.get("/api/health")
+def health():
+    return jsonify({"status": "ok"})
 
-  data.categories.forEach(c => {
-    const o = document.createElement("option");
-    o.value = c; o.textContent = c;
-    catEl.appendChild(o);
-  });
 
-  data.areas.forEach(a => {
-    const o = document.createElement("option");
-    o.value = a; o.textContent = a;
-    areaEl.appendChild(o);
-  });
-}
+@app.get("/api/meta")
+def meta():
+    conn = get_connection()
+    categories = [r["category"] for r in conn.execute(
+        "SELECT DISTINCT category FROM services ORDER BY category"
+    )]
+    areas = [r["area"] for r in conn.execute(
+        "SELECT DISTINCT area FROM services ORDER BY area"
+    )]
+    conn.close()
+    return jsonify({"categories": categories, "areas": areas})
 
-// ---------- Search ----------
-async function search(){
-  setMsg("");
-  const params = new URLSearchParams();
-  if(catEl.value) params.set("category", catEl.value);
-  if(areaEl.value) params.set("area", areaEl.value);
-  if(keywordEl.value.trim()) params.set("q", keywordEl.value.trim());
 
-  const res = await fetch(`${API}/services?${params.toString()}`);
-  const data = await res.json();
+@app.get("/api/services")
+def list_services():
+    category = request.args.get("category", "")
+    area = request.args.get("area", "")
+    q = request.args.get("q", "").lower()
 
-  resultsEl.innerHTML = "";
+    sql = "SELECT * FROM services WHERE 1=1"
+    params = []
 
-  if(!Array.isArray(data) || data.length === 0){
-    resultsEl.innerHTML = `<div style="opacity:.7;">No services found.</div>`;
-    return;
-  }
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
 
-  data.forEach(s => resultsEl.appendChild(renderCard(s)));
-}
+    if area:
+        sql += " AND area = ?"
+        params.append(area)
 
-function renderCard(s){
-  const div = document.createElement("div");
-  div.className = "item";
+    if q:
+        sql += " AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR phone LIKE ?)"
+        like = f"%{q}%"
+        params.extend([like, like, like])
 
-  const name = escapeHtml(s.name);
-  const category = escapeHtml(s.category);
-  const area = escapeHtml(s.area);
-  const phone = escapeHtml(s.phone);
-  const desc = escapeHtml(s.description || "");
+    conn = get_connection()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
-  div.innerHTML = `
-    <div class="badges">
-      <span class="badge">${category}</span>
-      <span class="badge">${area}</span>
-    </div>
-    <div class="name">${name}</div>
-    <div class="desc">${desc}</div>
-    <div class="phone">📞 ${phone}</div>
 
-    <div class="actions">
-      <a href="tel:${phone}">Call</a>
-      <button class="ghost btnCopy">Copy</button>
-      <button class="ghost btnEdit">Edit</button>
-      <button class="btnDel">Delete</button>
-    </div>
-  `;
+# ---------------- WRITE (ADMIN ONLY) ----------------
+@app.post("/api/services")
+def add_service():
+    if not is_admin(request):
+        return admin_required()
 
-  div.querySelector(".btnCopy").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(s.phone);
-    alert("Copied: " + s.phone);
-  });
+    data = request.get_json() or {}
+    for f in ["name", "category", "area", "phone"]:
+        if not str(data.get(f, "")).strip():
+            return jsonify({"error": f"{f} is required"}), 400
 
-  div.querySelector(".btnEdit").addEventListener("click", () => startEdit(s));
-  div.querySelector(".btnDel").addEventListener("click", () => deleteService(s.id));
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO services (name, category, area, phone, description)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        data["name"].strip(),
+        data["category"].strip(),
+        data["area"].strip(),
+        data["phone"].strip(),
+        data.get("description", "").strip()
+    ))
+    conn.commit()
+    conn.close()
 
-  return div;
-}
+    return jsonify({"message": "Service added"}), 201
 
-// ---------- Add / Update ----------
-async function saveService(){
-  setMsg("");
 
-  const payload = {
-    name: nameEl.value.trim(),
-    category: newCategoryEl.value.trim(),
-    area: newAreaEl.value.trim(),
-    phone: phoneEl.value.trim(),
-    description: descEl.value.trim()
-  };
+@app.put("/api/services/<int:service_id>")
+def update_service(service_id):
+    if not is_admin(request):
+        return admin_required()
 
-  const err = validateService(payload);
-  if(err){ setMsg(err, false); return; }
+    data = request.get_json() or {}
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE services
+        SET name=?, category=?, area=?, phone=?, description=?
+        WHERE id=?
+    """, (
+        data.get("name"),
+        data.get("category"),
+        data.get("area"),
+        data.get("phone"),
+        data.get("description", ""),
+        service_id
+    ))
+    conn.commit()
+    conn.close()
 
-  if(editingId === null){
-    // CREATE
-    const res = await fetch(`${API}/services`, {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if(!res.ok){ setMsg(data.error || "Failed to add service", false); return; }
-    setMsg("✅ Added successfully!");
-  } else {
-    // UPDATE
-    const res = await fetch(`${API}/services/${editingId}`, {
-      method: "PUT",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if(!res.ok){ setMsg(data.error || "Failed to update service", false); return; }
-    setMsg("✅ Updated successfully!");
-  }
+    return jsonify({"message": "Service updated"})
 
-  clearForm();
-  await loadMeta();
-  await search();
-}
 
-function startEdit(s){
-  editingId = s.id;
-  setModeEdit(true);
+@app.delete("/api/services/<int:service_id>")
+def delete_service(service_id):
+    if not is_admin(request):
+        return admin_required()
 
-  nameEl.value = s.name || "";
-  newCategoryEl.value = s.category || "";
-  newAreaEl.value = s.area || "";
-  phoneEl.value = s.phone || "";
-  descEl.value = s.description || "";
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM services WHERE id=?", (service_id,))
+    conn.commit()
+    conn.close()
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
+    return jsonify({"message": "Service deleted"})
 
-function clearForm(){
-  editingId = null;
-  setModeEdit(false);
 
-  nameEl.value = "";
-  newCategoryEl.value = "";
-  newAreaEl.value = "";
-  phoneEl.value = "";
-  descEl.value = "";
-}
-
-// ---------- Delete ----------
-async function deleteService(id){
-  if(!confirm("Delete this service?")) return;
-
-  const res = await fetch(`${API}/services/${id}`, { method: "DELETE" });
-  const data = await res.json();
-
-  if(!res.ok){
-    setMsg(data.error || "Failed to delete", false);
-    return;
-  }
-
-  setMsg("🗑️ Deleted!");
-  await loadMeta();
-  await search();
-}
-
-// ---------- Events ----------
-btnSearch.addEventListener("click", search);
-btnSave.addEventListener("click", saveService);
-btnCancel.addEventListener("click", clearForm);
-btnRefresh.addEventListener("click", async () => {
-  await loadMeta();
-  await search();
-});
-
-// optional: Search as you type (enable if you want)
-// keywordEl.addEventListener("input", () => search());
-
-(async function init(){
-  setModeEdit(false);
-  await loadMeta();
-  await search();
-})();
+# ---------------- Main ----------------
+if __name__ == "__main__":
+    init_db()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
