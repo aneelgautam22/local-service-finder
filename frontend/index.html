@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Local Service Finder</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<header class="header">
+  <h1>Local Service Finder</h1>
+  <p>Find plumbers, electricians, mechanics near you</p>
+</header>
+
+<main class="container">
+
+  <!-- SEARCH -->
+  <section class="card">
+    <h2>Search Services</h2>
+
+    <div class="grid">
+      <label>
+        Category
+        <select id="category">
+          <option value="">All Categories</option>
+        </select>
+      </label>
+
+      <label>
+        Area
+        <select id="area">
+          <option value="">All Areas</option>
+        </select>
+      </label>
+
+      <label>
+        Keyword
+        <input id="keyword" placeholder="name / phone / description" />
+      </label>
+
+      <button id="btnSearch">Search</button>
+    </div>
+
+    <p class="hint">Tip: Leave all empty and click Search to see all services.</p>
+  </section>
+
+  <!-- ADD / EDIT -->
+  <section class="card">
+    <div class="row">
+      <h2 id="formTitle">Add New Service</h2>
+      <span id="modeBadge" class="badge ghost">ADD MODE</span>
+    </div>
+
+    <div class="grid">
+      <label>
+        Name *
+        <input id="name" placeholder="Ram Plumber" />
+      </label>
+
+      <label>
+        Category *
+        <input id="newCategory" placeholder="Plumber" />
+      </label>
+
+      <label>
+        Area *
+        <input id="newArea" placeholder="Butwal" />
+      </label>
+
+      <label>
+        Phone *
+        <input id="phone" placeholder="9800000001" />
+      </label>
+
+      <label class="full">
+        Description
+        <input id="desc" placeholder="Leak fixing, wiring, servicing..." />
+      </label>
+
+      <button id="btnSave">Save</button>
+      <button id="btnCancel" class="ghost" style="display:none;">Cancel Edit</button>
+    </div>
+
+    <p id="msg" class="msg"></p>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="card">
+    <div class="row">
+      <h2>Results</h2>
+      <button id="btnRefresh" class="ghost small">Refresh</button>
+    </div>
+    <div id="results" class="results"></div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
