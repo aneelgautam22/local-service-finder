@@ -1,182 +1,232 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import sqlite3
-from pathlib import Path
-import os
+// ===== Local Service Finder (Frontend) =====
+// Works with Flask API endpoints:
+// GET    /api/meta
+// GET    /api/services?category=&area=&q=
+// POST   /api/services
+// PUT    /api/services/:id
+// DELETE /api/services/:id
 
-app = Flask(__name__)
-CORS(app)
+// ✅ IMPORTANT: Change API to your Render URL for public use
+const API = "https://local-service-finder-api.onrender.com/api";
 
-DB_PATH = Path(__file__).with_name("services.db")
+// Elements
+const categorySelect = document.getElementById("categorySelect");
+const areaSelect = document.getElementById("areaSelect");
+const keywordInput = document.getElementById("keywordInput");
+const searchBtn = document.getElementById("searchBtn");
+const resultsBox = document.getElementById("resultsBox");
+const refreshBtn = document.getElementById("refreshBtn");
 
-# ====== CONFIG ======
-ADMIN_KEY = os.environ.get("ADMIN_KEY", "admin123")  # change later if you want
+// Add/Edit form
+const nameInput = document.getElementById("nameInput");
+const categoryInput = document.getElementById("categoryInput");
+const areaInput = document.getElementById("areaInput");
+const phoneInput = document.getElementById("phoneInput");
+const descInput = document.getElementById("descInput");
+const saveBtn = document.getElementById("saveBtn");
 
+const modeBtn = document.getElementById("modeBtn");
+const formTitle = document.getElementById("formTitle");
 
-# ---------------- DB Helpers ----------------
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+let editId = null; // null => add mode
 
+async function fetchJSON(url, options = {}) {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
 
-def init_db():
-    conn = get_connection()
-    cur = conn.cursor()
+async function loadMeta() {
+  const meta = await fetchJSON(`${API}/meta`);
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS services (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            area TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            description TEXT DEFAULT ''
-        )
-    """)
+  // Fill category dropdown
+  categorySelect.innerHTML = `<option value="">All Categories</option>`;
+  meta.categories.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    categorySelect.appendChild(opt);
+  });
 
-    cur.execute("SELECT COUNT(*) AS c FROM services")
-    if cur.fetchone()["c"] == 0:
-        sample = [
-            ("Ram Plumber", "Plumber", "Butwal", "9800000001", "Leak fixing"),
-            ("Sita Electric", "Electrician", "Butwal", "9800000002", "Wiring & repair"),
-        ]
-        cur.executemany("""
-            INSERT INTO services (name, category, area, phone, description)
-            VALUES (?, ?, ?, ?, ?)
-        """, sample)
+  // Fill area dropdown
+  areaSelect.innerHTML = `<option value="">All Areas</option>`;
+  meta.areas.forEach((a) => {
+    const opt = document.createElement("option");
+    opt.value = a;
+    opt.textContent = a;
+    areaSelect.appendChild(opt);
+  });
+}
 
-    conn.commit()
-    conn.close()
+function renderResults(list) {
+  if (!list || list.length === 0) {
+    resultsBox.innerHTML = `<div class="empty">No services found.</div>`;
+    return;
+  }
 
+  resultsBox.innerHTML = list
+    .map(
+      (s) => `
+      <div class="result-card">
+        <div class="result-top">
+          <div class="result-title">${escapeHtml(s.name)}</div>
+          <div class="result-actions">
+            <button class="mini" onclick="startEdit(${s.id})">Edit</button>
+            <button class="mini danger" onclick="deleteService(${s.id})">Delete</button>
+          </div>
+        </div>
+        <div class="result-meta">
+          <span class="pill">${escapeHtml(s.category)}</span>
+          <span class="pill">${escapeHtml(s.area)}</span>
+          <span class="pill">${escapeHtml(s.phone)}</span>
+        </div>
+        <div class="result-desc">${escapeHtml(s.description || "")}</div>
+      </div>
+    `
+    )
+    .join("");
+}
 
-# ---------------- SECURITY ----------------
-def is_admin(req):
-    return req.headers.get("X-ADMIN-KEY") == ADMIN_KEY
+async function searchServices() {
+  const category = categorySelect.value || "";
+  const area = areaSelect.value || "";
+  const q = (keywordInput.value || "").trim();
 
+  const url =
+    `${API}/services?` +
+    `category=${encodeURIComponent(category)}` +
+    `&area=${encodeURIComponent(area)}` +
+    `&q=${encodeURIComponent(q)}`;
 
-def admin_required():
-    return jsonify({"error": "Read-only mode. Admin only."}), 403
+  const list = await fetchJSON(url);
+  renderResults(list);
+}
 
+function setAddMode() {
+  editId = null;
+  formTitle.textContent = "Add New Service";
+  modeBtn.textContent = "ADD MODE";
+  saveBtn.textContent = "Save";
 
-# ---------------- API Routes ----------------
-@app.get("/api/health")
-def health():
-    return jsonify({"status": "ok"})
+  nameInput.value = "";
+  categoryInput.value = "";
+  areaInput.value = "";
+  phoneInput.value = "";
+  descInput.value = "";
+}
 
+function setEditMode(service) {
+  editId = service.id;
+  formTitle.textContent = "Edit Service";
+  modeBtn.textContent = "EDIT MODE";
+  saveBtn.textContent = "Update";
 
-@app.get("/api/meta")
-def meta():
-    conn = get_connection()
-    categories = [r["category"] for r in conn.execute(
-        "SELECT DISTINCT category FROM services ORDER BY category"
-    )]
-    areas = [r["area"] for r in conn.execute(
-        "SELECT DISTINCT area FROM services ORDER BY area"
-    )]
-    conn.close()
-    return jsonify({"categories": categories, "areas": areas})
+  nameInput.value = service.name || "";
+  categoryInput.value = service.category || "";
+  areaInput.value = service.area || "";
+  phoneInput.value = service.phone || "";
+  descInput.value = service.description || "";
+}
 
+async function saveService() {
+  const payload = {
+    name: nameInput.value.trim(),
+    category: categoryInput.value.trim(),
+    area: areaInput.value.trim(),
+    phone: phoneInput.value.trim(),
+    description: descInput.value.trim(),
+  };
 
-@app.get("/api/services")
-def list_services():
-    category = request.args.get("category", "")
-    area = request.args.get("area", "")
-    q = request.args.get("q", "").lower()
+  if (!payload.name || !payload.category || !payload.area || !payload.phone) {
+    alert("Please fill: Name, Category, Area, Phone");
+    return;
+  }
 
-    sql = "SELECT * FROM services WHERE 1=1"
-    params = []
+  if (editId === null) {
+    // Add
+    await fetchJSON(`${API}/services`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    setAddMode();
+    await loadMeta();
+    await searchServices();
+    alert("Saved!");
+  } else {
+    // Update
+    await fetchJSON(`${API}/services/${editId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    setAddMode();
+    await loadMeta();
+    await searchServices();
+    alert("Updated!");
+  }
+}
 
-    if category:
-        sql += " AND category = ?"
-        params.append(category)
+// Expose functions for inline onclick buttons
+window.startEdit = async function (id) {
+  // We fetch all and find (simple)
+  const list = await fetchJSON(`${API}/services?category=&area=&q=`);
+  const service = list.find((x) => x.id === id);
+  if (!service) return alert("Service not found");
+  setEditMode(service);
+};
 
-    if area:
-        sql += " AND area = ?"
-        params.append(area)
+window.deleteService = async function (id) {
+  if (!confirm("Delete this service?")) return;
+  await fetchJSON(`${API}/services/${id}`, { method: "DELETE" });
+  await loadMeta();
+  await searchServices();
+};
 
-    if q:
-        sql += " AND (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR phone LIKE ?)"
-        like = f"%{q}%"
-        params.extend([like, like, like])
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
-    conn = get_connection()
-    rows = conn.execute(sql, params).fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
+// Events
+searchBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  searchServices().catch((err) => alert(err.message));
+});
 
+refreshBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  loadMeta()
+    .then(searchServices)
+    .catch((err) => alert(err.message));
+});
 
-# ---------------- WRITE (ADMIN ONLY) ----------------
-@app.post("/api/services")
-def add_service():
-    if not is_admin(request):
-        return admin_required()
+saveBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  saveService().catch((err) => alert(err.message));
+});
 
-    data = request.get_json() or {}
-    for f in ["name", "category", "area", "phone"]:
-        if not str(data.get(f, "")).strip():
-            return jsonify({"error": f"{f} is required"}), 400
+modeBtn?.addEventListener("click", (e) => {
+  e.preventDefault();
+  setAddMode();
+});
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO services (name, category, area, phone, description)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        data["name"].strip(),
-        data["category"].strip(),
-        data["area"].strip(),
-        data["phone"].strip(),
-        data.get("description", "").strip()
-    ))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"message": "Service added"}), 201
-
-
-@app.put("/api/services/<int:service_id>")
-def update_service(service_id):
-    if not is_admin(request):
-        return admin_required()
-
-    data = request.get_json() or {}
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE services
-        SET name=?, category=?, area=?, phone=?, description=?
-        WHERE id=?
-    """, (
-        data.get("name"),
-        data.get("category"),
-        data.get("area"),
-        data.get("phone"),
-        data.get("description", ""),
-        service_id
-    ))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"message": "Service updated"})
-
-
-@app.delete("/api/services/<int:service_id>")
-def delete_service(service_id):
-    if not is_admin(request):
-        return admin_required()
-
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM services WHERE id=?", (service_id,))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"message": "Service deleted"})
-
-
-# ---------------- Main ----------------
-if __name__ == "__main__":
-    init_db()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+// Init
+(async function init() {
+  try {
+    setAddMode();
+    await loadMeta();
+    await searchServices();
+  } catch (err) {
+    console.error(err);
+    alert("API not reachable. Check Render URL in app.js");
+  }
+})();
