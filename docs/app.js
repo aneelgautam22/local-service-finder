@@ -1,4 +1,5 @@
-const API = "http://127.0.0.1:5000/api";
+const API = "https://local-service-finder-api.onrender.com/api";
+
 
 const resultsEl = document.getElementById("results");
 const msgEl = document.getElementById("msg");
